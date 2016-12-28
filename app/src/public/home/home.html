@@ -1,0 +1,278 @@
+<div class="container-fluid" style="margin:30px 0px 0px 200px">
+    <div class="row" id="sample">
+        <div class="col-md-12">
+            <div id="paletteDraggable" class="draggable" style="height: 300px;">
+                <div id="paletteDraggableHandle" class="handle">Palette</div>
+                <div id="paletteContainer">
+                    <div id="myPaletteDiv"></div>
+                </div>
+            </div>
+
+            <div style="display: inline-block; vertical-align: top; padding: 5px; width:450px; margin-left: 13%">
+                <div id="myDiagramDiv" style="background-color: whitesmoke; border: solid 1px black; height: 400px"></div>
+            </div>
+
+            <div id="infoDraggable" class="draggable" style="display: inline-block; vertical-align: top; padding: 5px; top: 20px; left: 520px; margin-left: 10%">
+                <div id="infoDraggableHandle" class="handle">Info</div>
+                <div>
+                    <div id="myInfo"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-12">
+            <div>
+                <button type="button" class="btn btn-primary" onclick="toJson()">save</button>
+                <button type="button" class="btn btn-default" onclick="clearDiagram()">clear</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Note that we do not use $ here as an alias for go.GraphObject.make because we are using $ for jQuery
+        var GO = go.GraphObject.make; // for conciseness in defining templates
+        myDiagram =
+            GO(go.Diagram, "myDiagramDiv", // must name or refer to the DIV HTML element
+                {
+                    allowDrop: true,
+                    // allow double-click in background to create a new node
+                    "clickCreatingTool.archetypeNodeData": {
+                        text: "Node",
+                        color: "gray"
+                    },
+                    // enable undo & redo
+                    "undoManager.isEnabled": true
+                }); // must be true to accept drops from the Palette
+
+
+        // define several shared Brushes
+        var fill1 = "rgb(105,210,231)"
+        var brush1 = "rgb(65,180,181)";
+        var fill2 = "rgb(167,219,216)"
+        var brush2 = "rgb(127,179,176)";
+        var fill3 = "rgb(224,228,204)"
+        var brush3 = "rgb(184,188,164)";
+        var fill4 = "rgb(243,134,48)"
+        var brush4 = "rgb(203,84,08)";
+        myDiagram.nodeTemplateMap.add("", // default category
+            GO(go.Node, "Auto", {
+                    locationSpot: go.Spot.Center
+                },
+                new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+                GO(go.Shape, "Ellipse", {
+                        strokeWidth: 2,
+                        fill: fill1,
+                        name: "SHAPE",
+                        portId: "",
+                        cursor: "pointer", // the Shape is the port, not the whole Node
+                        // allow all kinds of links from and to this port
+                        fromLinkable: true,
+                        fromLinkableSelfNode: true,
+                        fromLinkableDuplicates: true,
+                        toLinkable: true,
+                        toLinkableSelfNode: true,
+                        toLinkableDuplicates: true
+                    },
+                    new go.Binding("figure", "figure"),
+                    new go.Binding("fill", "fill"),
+                    new go.Binding("stroke", "stroke")
+                ),
+                GO(go.TextBlock, {
+                        margin: 5,
+                        maxSize: new go.Size(200, NaN),
+                        wrap: go.TextBlock.WrapFit,
+                        textAlign: "center",
+                        editable: true,
+                        font: "bold 9pt Helvetica, Arial, sans-serif",
+                        name: "TEXT"
+                    },
+                    new go.Binding("text", "text").makeTwoWay())));
+        myDiagram.linkTemplate =
+            GO(go.Link, {
+                    routing: go.Link.AvoidsNodes,
+                    corner: 5
+                },
+                GO(go.Shape, {
+                    strokeWidth: 1.5,
+                    // strokeDashArray: [3, 2]
+                }),
+                GO(go.Shape, {
+                    toArrow: "OpenTriangle"
+
+                })
+            );
+        // a selected node shows an Adornment that includes both a blue border
+        // and a row of Buttons above the node
+        myDiagram.nodeTemplate.selectionAdornmentTemplate =
+            GO(go.Adornment, "Spot",
+                GO(go.Panel, "Auto",
+                    GO(go.Shape, {
+                        stroke: "dodgerblue",
+                        strokeWidth: 2,
+                        fill: null
+                    }),
+                    GO(go.Placeholder)
+                ),
+                GO(go.Panel, "Horizontal", {
+                        alignment: go.Spot.Top,
+                        alignmentFocus: go.Spot.Bottom
+                    },
+                    GO("Button", {
+                            click: editText
+                        }, // defined below, to support editing the text of the node
+                        GO(go.TextBlock, "t", {
+                            font: "bold 10pt sans-serif",
+                            desiredSize: new go.Size(15, 15),
+                            textAlign: "center"
+                        })
+                    ),
+
+                    GO("Button", { // drawLink is defined below, to support interactively drawing new links
+                            click: drawLink, // click on Button and then click on target node
+                            actionMove: drawLink // drag from Button to the target node
+                        },
+                        GO(go.Shape, {
+                            geometryString: "M0 0 L8 0 8 12 14 12 M12 10 L14 12 12 14"
+                        })
+                    )
+                )
+            );
+
+        function editText(e, button) {
+            var node = button.part.adornedPart;
+            e.diagram.commandHandler.editTextBlock(node.findObject("TEXTBLOCK"));
+        }
+
+        function drawLink(e, button) {
+            var node = button.part.adornedPart;
+            var tool = e.diagram.toolManager.linkingTool;
+            tool.startObject = node.port;
+            e.diagram.currentTool = tool;
+            tool.doActivate();
+        }
+
+        // used by both clickNewNode and dragNewNode to create a node and a link
+        // from a given node to the new node
+        function createNodeAndLink(data, fromnode) {
+            var diagram = fromnode.diagram;
+            var model = diagram.model;
+            var nodedata = model.copyNodeData(data);
+            model.addNodeData(nodedata);
+            var newnode = diagram.findNodeForData(nodedata);
+            var linkdata = model.copyLinkData({});
+            model.setFromKeyForLinkData(linkdata, model.getKeyForNodeData(fromnode.data));
+            model.setToKeyForLinkData(linkdata, model.getKeyForNodeData(newnode.data));
+            model.addLinkData(linkdata);
+            diagram.select(newnode);
+            return newnode;
+        }
+
+        // the Button.click event handler, called when the user clicks the "N" button
+        function clickNewNode(e, button) {
+            var data = button._dragData;
+            if (!data) return;
+            e.diagram.startTransaction("Create Node and Link");
+            var fromnode = button.part.adornedPart;
+            var newnode = createNodeAndLink(button._dragData, fromnode);
+            newnode.location = new go.Point(fromnode.location.x + 200, fromnode.location.y);
+            e.diagram.commitTransaction("Create Node and Link");
+        }
+
+        // the Button.actionMove event handler, called when the user drags within the "N" button
+        function dragNewNode(e, button) {
+            var tool = e.diagram.toolManager.draggingTool;
+            if (tool.isBeyondDragSize()) {
+                var data = button._dragData;
+                if (!data) return;
+                e.diagram.startTransaction("button drag"); // see doDeactivate, below
+                var newnode = createNodeAndLink(data, button.part.adornedPart);
+                newnode.location = e.diagram.lastInput.documentPoint;
+                // don't commitTransaction here, but in tool.doDeactivate, after drag operation finished
+                // set tool.currentPart to a selected movable Part and then activate the DraggingTool
+                tool.currentPart = newnode;
+                e.diagram.currentTool = tool;
+                tool.doActivate();
+            }
+        }
+        // On selection changed, make sure infoDraggable will resize as necessary
+        myDiagram.addDiagramListener("ChangedSelection", function(diagramEvent) {
+            var idrag = document.getElementById("infoDraggable");
+            idrag.style.width = "";
+            idrag.style.height = "";
+        });
+        // initialize the Palette that is in a floating, draggable HTML container
+        myPalette = new go.Palette("myPaletteDiv"); // must name or refer to the DIV HTML element
+        myPalette.nodeTemplateMap = myDiagram.nodeTemplateMap;
+        myPalette.model = new go.GraphLinksModel([{
+            text: "Node 1",
+            fill: fill1,
+            stroke: brush1,
+            figure: "Hexagon"
+        }, {
+            text: "Node 2",
+            fill: fill2,
+            stroke: brush2,
+            figure: "Rectangle"
+        }, {
+            text: "Node 3",
+            fill: fill3,
+            stroke: brush3,
+            figure: "Diamond"
+        }, {
+            text: "Node 4",
+            fill: fill4,
+            stroke: brush4,
+            figure: "Octagon"
+        }]);
+
+
+        myPalette.addDiagramListener("InitialLayoutCompleted", function(diagramEvent) {
+            var pdrag = document.getElementById("paletteDraggable");
+            var palette = diagramEvent.diagram;
+            var paddingHorizontal = palette.padding.left + palette.padding.right;
+            var paddingVertical = palette.padding.top + palette.padding.bottom;
+            pdrag.style.width = palette.documentBounds.width + 30 + "px";
+            pdrag.style.height = palette.documentBounds.height + 50 + "px";
+        });
+        $(function() {
+            $("#paletteDraggable").draggable({
+                handle: "#paletteDraggableHandle"
+            }).resizable({
+                // After resizing, perform another layout to fit everything in the palette's viewport
+                stop: function() {
+                    myPalette.layoutDiagram(true);
+                }
+            });
+            $("#infoDraggable").draggable({
+                handle: "#infoDraggableHandle"
+            });
+            var inspector = new Inspector('myInfo', myDiagram, {
+                properties: {
+                    // key would be automatically added for nodes, but we want to declare it read-only also:
+                    "key": {
+                        readOnly: true,
+                        show: Inspector.showIfPresent
+                    },
+                    // fill and stroke would be automatically added for nodes, but we want to declare it a color also:
+                    "fill": {
+                        show: Inspector.showIfPresent,
+                        type: 'color'
+                    },
+                    "stroke": {
+                        show: Inspector.showIfPresent,
+                        type: 'color'
+                    }
+                }
+            });
+        });
+
+        function toJson() {
+            var modelAsText = myDiagram.model.toJson();
+            console.log(modelAsText);
+        }
+
+        function clearDiagram() {
+            var modelAsText = myDiagram.clear();
+        }
+    </script>
